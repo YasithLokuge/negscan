@@ -6,6 +6,7 @@ are all checkable cheaply.
 """
 import os
 import re
+import struct
 import sys
 import unittest
 
@@ -32,7 +33,8 @@ class FilesPresentTests(unittest.TestCase):
                      "packaging/build.py", "packaging/negscan.spec", "packaging/negscan.iss",
                      "packaging/linux/install.sh", "packaging/linux/negscan.desktop",
                      "packaging/linux/99-negscan.rules",
-                     "assets/icon.svg", "assets/icon.png", "assets/Negscan.icns",
+                     "assets/icon.svg", "assets/icon.png",
+                     "assets/Negscan.icns", "assets/Negscan.ico",
                      ".github/workflows/ci.yml", ".github/workflows/release.yml"):
             with self.subTest(path=path):
                 self.assertTrue(os.path.isfile(os.path.join(PROJECT, path)), f"missing {path}")
@@ -47,6 +49,59 @@ class FilesPresentTests(unittest.TestCase):
         self.assertIn("*.spec", gitignore)
         self.assertIn("!packaging/*.spec", gitignore,
                       "packaging/negscan.spec would not be committed")
+
+
+class WindowsIconTests(unittest.TestCase):
+    """The .ico is committed, so nothing on the build machine checks it. Do it here.
+
+    PyInstaller will not convert a PNG without Pillow, and the Windows release job failed exactly
+    that way once.
+    """
+
+    @staticmethod
+    def entries():
+        with open(os.path.join(PROJECT, "assets", "Negscan.ico"), "rb") as handle:
+            data = handle.read()
+        reserved, kind, count = struct.unpack("<HHH", data[:6])
+        assert (reserved, kind) == (0, 1), "not an ICO file"
+        out = []
+        for i in range(count):
+            width, height, _, _, _, bpp, size, offset = struct.unpack(
+                "<BBBBHHII", data[6 + 16 * i:22 + 16 * i])
+            out.append({"width": width or 256, "height": height or 256, "bpp": bpp,
+                        "blob": data[offset:offset + size]})
+        return data, out
+
+    def test_is_a_valid_ico_with_the_sizes_windows_asks_for(self):
+        _, entries = self.entries()
+        sizes = sorted(e["width"] for e in entries)
+        for needed in (16, 32, 48, 256):
+            self.assertIn(needed, sizes, f"no {needed} px entry; sizes are {sizes}")
+
+    def test_every_entry_matches_its_directory_record(self):
+        _, entries = self.entries()
+        for entry in entries:
+            with self.subTest(size=entry["width"]):
+                blob = entry["blob"]
+                self.assertTrue(blob, "entry is empty")
+                if blob[:8] == b"\x89PNG\r\n\x1a\n":
+                    width, height = struct.unpack(">II", blob[16:24])
+                else:
+                    header, width, doubled = struct.unpack("<Iii", blob[:12])
+                    self.assertEqual(header, 40, "expected a BITMAPINFOHEADER")
+                    height = doubled // 2
+                self.assertEqual((width, height), (entry["width"], entry["height"]))
+                self.assertEqual(entry["bpp"], 32)
+
+    def test_no_entry_runs_past_the_end_of_the_file(self):
+        data, entries = self.entries()
+        self.assertEqual(6 + 16 * len(entries) + sum(len(e["blob"]) for e in entries), len(data))
+
+    def test_spec_uses_the_ico_on_windows(self):
+        spec = read("packaging", "negscan.spec")
+        self.assertIn('"Negscan.ico"', spec)
+        self.assertIn('"Negscan.icns"', spec)
+        self.assertNotIn('"icon.png"))', spec, "the PNG is not a valid executable icon")
 
 
 class BuildScriptTests(unittest.TestCase):
@@ -85,10 +140,43 @@ class WorkflowTests(unittest.TestCase):
         self.ci = read(".github", "workflows", "ci.yml")
         self.release = read(".github", "workflows", "release.yml")
 
+    @unittest.skipIf(yaml is None, "pyyaml is not installed")
     def test_release_builds_every_platform_we_claim_to_support(self):
-        for runner in ("macos-13", "macos-14", "windows-latest", "ubuntu-"):
-            with self.subTest(runner=runner):
-                self.assertIn(runner, self.release)
+        jobs = yaml.safe_load(read(".github", "workflows", "release.yml"))["jobs"]
+        runners = {entry["os"] for entry in jobs["build"]["strategy"]["matrix"]["include"]}
+        self.assertEqual(len(runners), 4, f"expected four build targets, got {runners}")
+        self.assertTrue(any(r.startswith("windows") for r in runners), runners)
+        self.assertTrue(any(r.startswith("ubuntu") for r in runners), runners)
+        self.assertTrue(any(r.startswith("macos") for r in runners), runners)
+
+    @unittest.skipIf(yaml is None, "pyyaml is not installed")
+    def test_an_intel_mac_build_is_still_produced(self):
+        """Dropping this would leave x86_64 Macs, including the development machine, with nothing.
+
+        Every plain macos-* label is Apple Silicon; only macos-15-intel is x86_64, and GitHub
+        retires it in August 2027.
+        """
+        jobs = yaml.safe_load(read(".github", "workflows", "release.yml"))["jobs"]
+        runners = {entry["os"] for entry in jobs["build"]["strategy"]["matrix"]["include"]}
+        self.assertIn("macos-15-intel", runners)
+
+    @unittest.skipIf(yaml is None, "pyyaml is not installed")
+    def test_no_retired_runner_labels(self):
+        """A job asking for a retired label queues until cancelled instead of failing fast."""
+        retired = ("macos-11", "macos-12", "macos-13", "ubuntu-20.04", "windows-2019")
+        text = read(".github", "workflows", "release.yml") + read(".github", "workflows", "ci.yml")
+        for label in retired:
+            with self.subTest(label=label):
+                self.assertNotIn(f"{label}\n", text)
+
+    @unittest.skipIf(yaml is None, "pyyaml is not installed")
+    def test_jobs_have_a_timeout(self):
+        for name in ("ci", "release"):
+            jobs = yaml.safe_load(read(".github", "workflows", f"{name}.yml"))["jobs"]
+            for job_name, job in jobs.items():
+                with self.subTest(workflow=name, job=job_name):
+                    self.assertIsNotNone(job.get("timeout-minutes"),
+                                         f"{name}.yml job {job_name!r} can hang indefinitely")
 
     def test_release_runs_the_build_script(self):
         self.assertIn("packaging/build.py", self.release)

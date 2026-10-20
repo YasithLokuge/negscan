@@ -77,7 +77,14 @@ camera permission — the device is not a camera, so nothing in macOS Privacy & 
 ```
 
 Output lands in `dist/release/`. The script builds for whichever platform it is run on; PyInstaller
-cannot cross-build, which is why the release workflow uses four runners. Tag a commit to publish:
+cannot cross-build, which is why the release workflow uses four runners: `macos-15-intel`,
+`macos-15`, `windows-latest` and `ubuntu-22.04`.
+
+`macos-15-intel` is the only x86_64 macOS image GitHub still offers and the last one it plans to —
+support ends in August 2027. Every other `macos-*` label is Apple Silicon. When it goes, Intel
+Macs will need a DMG built locally with the command above.
+
+Tag a commit to publish:
 
 ```
 git tag v0.1.0 && git push origin v0.1.0
@@ -156,9 +163,11 @@ Useful for scripting, and for checking the hardware without the GUI:
   install files. `.github/workflows/` runs the tests on all three platforms and builds the
   release.
 - `scanner_app/icon.py`, `assets/` — the app icon. `assets/icon.svg` is the source; running
-  `./.venv/bin/python scripts/make_icon.py` regenerates `icon.png` and the `Negscan.icns` that a
-  `.app` bundle would use. Qt renders the SVG at whatever size it needs, so the window and Dock
-  stay crisp.
+  `./.venv/bin/python scripts/make_icon.py` regenerates `icon.png` (used at run time),
+  `Negscan.icns` (the macOS bundle) and `Negscan.ico` (embedded in the Windows .exe). Every size
+  is rendered from the SVG rather than downscaled from one bitmap, so the 16 px icon is drawn at
+  16 px. All three are committed: PyInstaller can only convert a PNG to an .ico when Pillow is
+  installed, and `iconutil` exists only on macOS, so the build machines cannot produce them.
 
 `FINDINGS.md` records how the protocol was worked out, and what is still unknown.
 
@@ -178,9 +187,10 @@ captures resume from the last answer and usually settle in two.
 ./.venv/bin/python -m unittest discover -s tests -v
 ```
 
-90 tests covering the image pipeline, saturation, rotation, the Bayer decoders, the register tables, the
+100 tests covering the image pipeline, saturation, rotation, the Bayer decoders, the register tables, the
 `libusb` structure layout, the icon assets, the auto-exposure search against a modelled sensor,
-and the window's capture locking and sidebar layout (driven offscreen, with real key events).
+the window's capture locking and sidebar layout (driven offscreen, with real key events),
+and the packaging files, workflow permissions and the Windows icon.
 They need no hardware; three skip unless the vendor `.set` files are present, which they are not
 in this repository. The scanner itself was exercised separately: repeated scans, reconnects, and
 recovery after killing a process mid-stream.

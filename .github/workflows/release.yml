@@ -26,15 +26,18 @@ jobs:
     name: ${{ matrix.label }}
     if: github.actor == github.repository_owner
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          # macos-13 is the last Intel runner; macos-14 and later are Apple Silicon. PyInstaller
-          # cannot cross-build, so each architecture needs its own runner.
-          - os: macos-13
+          # Every plain macos-* label is Apple Silicon now; macos-15-intel is the one x86_64 image
+          # GitHub still offers, and the last it plans to (support ends August 2027). macos-13 was
+          # retired, and a job asking for it just queues until it is cancelled rather than failing.
+          # PyInstaller cannot cross-build, so each architecture needs its own runner.
+          - os: macos-15-intel
             label: macOS (Intel)
-          - os: macos-14
+          - os: macos-15
             label: macOS (Apple Silicon)
           - os: windows-latest
             label: Windows
@@ -124,6 +127,7 @@ jobs:
     needs: build
     if: github.ref_type == 'tag' && github.actor == github.repository_owner
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write        # only this job needs to write, and only to create the release
     steps:
