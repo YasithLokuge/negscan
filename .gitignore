@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Packaging / build output
+build/
+dist/
+*.egg-info/
+*.spec
+
+# Testing / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editors
+.idea/
+.vscode/
+
+# macOS
+.DS_Store
+
+# Captured scans / local output
+*.raw
+*.tiff
+*.tif
+*.dng
+captures/
+output/

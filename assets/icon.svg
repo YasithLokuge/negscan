@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Negscan app icon: one frame of film on a strip. The left half is still an orange-masked
+       negative, the right half is developed, and the join is where the scanner has got to.
+
+       Qt's SVG engine ignores clip-path completely, at every level, so the two halves cannot be
+       made by clipping one drawing twice. Each ridge is therefore split by hand at x=512, and the
+       two paths share the y value there so they meet exactly: 541 on the back ridge, 698 on the
+       front one. Move a ridge vertex and both halves have to be recomputed.
+
+       Straight segments rather than curves, and nothing smaller than a sprocket hole: this has to
+       survive being scaled to 16 px. -->
+  <defs>
+    <linearGradient id="backdrop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b313d"/>
+      <stop offset="1" stop-color="#11141a"/>
+    </linearGradient>
+    <linearGradient id="filmBody" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a4250"/>
+      <stop offset="1" stop-color="#232833"/>
+    </linearGradient>
+    <linearGradient id="skyPositive" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6fb9ec"/>
+      <stop offset="1" stop-color="#cbe7f6"/>
+    </linearGradient>
+    <!-- the same sky as it comes off the film: inverted, then warmed by the orange mask -->
+    <linearGradient id="skyNegative" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b4682a"/>
+      <stop offset="1" stop-color="#7c4a21"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" rx="224" fill="url(#backdrop)"/>
+
+  <!-- film strip -->
+  <rect x="112" y="160" width="800" height="704" rx="48" fill="url(#filmBody)"/>
+  <g fill="#e9e5db">
+    <rect x="176" y="200" width="64" height="64" rx="18"/>
+    <rect x="296" y="200" width="64" height="64" rx="18"/>
+    <rect x="416" y="200" width="64" height="64" rx="18"/>
+    <rect x="536" y="200" width="64" height="64" rx="18"/>
+    <rect x="656" y="200" width="64" height="64" rx="18"/>
+    <rect x="776" y="200" width="64" height="64" rx="18"/>
+    <rect x="176" y="800" width="64" height="64" rx="18"/>
+    <rect x="296" y="800" width="64" height="64" rx="18"/>
+    <rect x="416" y="800" width="64" height="64" rx="18"/>
+    <rect x="536" y="800" width="64" height="64" rx="18"/>
+    <rect x="656" y="800" width="64" height="64" rx="18"/>
+    <rect x="776" y="800" width="64" height="64" rx="18"/>
+  </g>
+
+  <!-- sky -->
+  <rect x="176" y="296" width="336" height="448" fill="url(#skyNegative)"/>
+  <rect x="512" y="296" width="336" height="448" fill="url(#skyPositive)"/>
+
+  <!-- sun: one on each side, so neither circle has to straddle the join -->
+  <circle cx="330" cy="404" r="58" fill="#2f5f91"/>
+  <circle cx="694" cy="404" r="58" fill="#ffd45e"/>
+
+  <!-- back ridge, split at x=512 y=541 -->
+  <path d="M176 744 L176 640 L300 540 L420 620 L512 541 L512 744 Z" fill="#9c5a8e"/>
+  <path d="M512 744 L512 541 L560 500 L700 600 L848 560 L848 744 Z" fill="#5d9e52"/>
+
+  <!-- front ridge, split at x=512 y=698 -->
+  <path d="M176 744 L176 700 L340 650 L512 698 L512 744 Z" fill="#cda074"/>
+  <path d="M512 744 L512 698 L520 700 L700 655 L848 690 L848 744 Z" fill="#2f6b38"/>
+
+  <!-- the join -->
+  <rect x="504" y="296" width="16" height="448" fill="#11141a" opacity="0.5"/>
+
+  <rect x="176" y="296" width="672" height="448" rx="8" fill="none"
+        stroke="#11141a" stroke-opacity="0.5" stroke-width="12"/>
+</svg>
