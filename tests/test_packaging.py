@@ -169,10 +169,40 @@ class WorkflowTests(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertNotIn(f"{label}\n", text)
 
-    def test_build_explains_when_nothing_will_be_published(self):
-        """A manual run skips Publish on purpose; the run has to say so somewhere visible."""
+    def test_build_explains_whether_a_release_is_coming(self):
+        """A skipped Publish job gives no hint why, so the run summary has to spell it out."""
         self.assertIn("GITHUB_STEP_SUMMARY", self.release)
-        self.assertIn("no release is published", self.release)
+        self.assertIn("No release will be published", self.release)
+        self.assertIn("will be published", self.release)
+
+    @unittest.skipIf(yaml is None, "pyyaml is not installed")
+    def test_a_tag_push_publishes_and_a_plain_manual_run_does_not(self):
+        condition = " ".join(
+            yaml.safe_load(read(".github", "workflows", "release.yml"))["jobs"]["release"]["if"]
+            .split())
+        self.assertIn("github.ref_type == 'tag'", condition)
+        self.assertIn("inputs.publish", condition)
+        self.assertIn("github.actor == github.repository_owner", condition)
+
+    @unittest.skipIf(yaml is None, "pyyaml is not installed")
+    def test_manual_runs_can_opt_into_publishing(self):
+        """Without this the only way to publish is a local tag, which is easy to get wrong."""
+        document = yaml.safe_load(read(".github", "workflows", "release.yml"))
+        triggers = document.get("on", document.get(True))   # YAML reads a bare `on` as True
+        inputs = triggers["workflow_dispatch"]["inputs"]
+        self.assertIn("publish", inputs)
+        self.assertEqual(inputs["publish"]["default"], False)
+
+    @unittest.skipIf(yaml is None, "pyyaml is not installed")
+    def test_publishing_a_manual_run_still_gets_a_tag_name(self):
+        """action-gh-release needs a tag; on a manual run it comes from the built version."""
+        jobs = yaml.safe_load(read(".github", "workflows", "release.yml"))["jobs"]
+        self.assertEqual(jobs["build"].get("outputs", {}).get("version"),
+                         "${{ steps.version.outputs.version }}")
+        step = next(s for s in jobs["release"]["steps"] if "gh-release" in str(s.get("uses", "")))
+        tag = " ".join(step["with"]["tag_name"].split())
+        self.assertIn("github.ref_name", tag)
+        self.assertIn("needs.build.outputs.version", tag)
 
     @unittest.skipIf(yaml is None, "pyyaml is not installed")
     def test_jobs_have_a_timeout(self):

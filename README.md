@@ -90,6 +90,12 @@ Tag a commit to publish:
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
+Or start the **release** workflow from the Actions tab: it always builds the installers and
+attaches them to the run, and publishes a release as well if you tick *publish*, which tags the
+commit it ran on. A run that was not a tag push and was not asked to publish leaves the Publish
+job skipped on purpose — and because re-running a run keeps its original trigger, re-running it
+will not change that. Each build writes to the run summary which of the two happened.
+
 ### Who can run the workflows
 
 Both workflows gate every job on `github.actor == github.repository_owner`, so only the repository
@@ -187,7 +193,7 @@ captures resume from the last answer and usually settle in two.
 ./.venv/bin/python -m unittest discover -s tests -v
 ```
 
-100 tests covering the image pipeline, saturation, rotation, the Bayer decoders, the register tables, the
+104 tests covering the image pipeline, saturation, rotation, the Bayer decoders, the register tables, the
 `libusb` structure layout, the icon assets, the auto-exposure search against a modelled sensor,
 the window's capture locking and sidebar layout (driven offscreen, with real key events),
 and the packaging files, workflow permissions and the Windows icon.
