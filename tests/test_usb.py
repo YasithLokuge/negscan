@@ -22,8 +22,10 @@ class TransferLayoutTests(unittest.TestCase):
     """
 
     def test_struct_size_and_descriptor_offset(self):
-        self.assertEqual(ctypes.sizeof(libusb_iso.Transfer), 64)
-        self.assertEqual(libusb_iso.DESC_OFFSET, 60)
+        if ctypes.sizeof(ctypes.c_void_p) == 8:          # the only case we ship
+            self.assertEqual(ctypes.sizeof(libusb_iso.Transfer), 64)
+            self.assertEqual(libusb_iso.DESC_OFFSET, 60)
+        self.assertLess(libusb_iso.DESC_OFFSET, ctypes.sizeof(libusb_iso.Transfer))
 
     def test_descriptor_offset_follows_num_iso_packets(self):
         field = libusb_iso.Transfer.num_iso_packets

@@ -1,6 +1,4 @@
 """Main window: live preview, film settings and capture."""
-import os
-import subprocess
 from collections import namedtuple
 from dataclasses import replace
 
@@ -17,9 +15,10 @@ from . import processing as proc
 from . import usb_scanner
 from .capture import CaptureRequest, CaptureWorker
 from .icon import app_icon
+from .platform_support import pictures_dir, reveal
 from .styles import STYLESHEET
 
-DEFAULT_FOLDER = os.path.join(os.path.expanduser("~"), "Pictures", "Negscan")
+DEFAULT_FOLDER = pictures_dir()
 CAPTURE_LABEL = "Capture   Space"
 CAPTURE_BUSY_LABEL = "Scanning…"
 Slider = namedtuple("Slider", "slider label")
@@ -438,8 +437,8 @@ class MainWindow(QMainWindow):
         self.open_button.setEnabled(True)
 
     def reveal_last(self):
-        if self._last_saved:
-            subprocess.run(["open", "-R", self._last_saved], check=False)
+        if self._last_saved and not reveal(self._last_saved):
+            self.msg_label.setText(f"Saved at {self._last_saved}")
 
     def choose_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Choose scan folder", self.folder_edit.text())

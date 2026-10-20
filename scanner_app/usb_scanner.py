@@ -24,6 +24,7 @@ import usb.util
 
 from . import ov5620
 from .libusb_iso import IsoStream
+from .platform_support import missing_libusb_message, usb_backend
 
 VID, PID = 0x05A9, 0x1550
 INTERFACE = 0
@@ -60,8 +61,15 @@ class ScannerError(Exception):
 
 
 def find_device():
-    """Return the raw USB device, or None when the scanner is not plugged in."""
-    return usb.core.find(idVendor=VID, idProduct=PID)
+    """Return the raw USB device, or None when the scanner is not plugged in.
+
+    Raises ScannerError when libusb itself cannot be loaded, which is a different problem from the
+    scanner being unplugged and deserves a different message.
+    """
+    try:
+        return usb.core.find(idVendor=VID, idProduct=PID, backend=usb_backend())
+    except usb.core.NoBackendError as e:
+        raise ScannerError(missing_libusb_message()) from e
 
 
 class Scanner:

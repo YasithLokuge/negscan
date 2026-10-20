@@ -1,0 +1,8 @@
+pyinstaller>=6.6
+pyflakes>=3.2
+# Ships a prebuilt libusb for every platform we release on, so the frozen app
+# never depends on what the build machine happens to have installed.
+libusb-package>=1.0.26
+# Used by tests/test_packaging.py to read the workflow files properly
+# rather than by pattern matching.
+pyyaml>=6.0

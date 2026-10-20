@@ -1,0 +1,8 @@
+# Kaiser Baas / OVT film scanner (OmniVision OV550 bridge, OV5620 sensor).
+#
+# The device is vendor-specific class 0xFF, so no kernel driver claims it and libusb can open it
+# directly -- but only root may do so by default. uaccess hands it to whoever is logged in at the
+# seat, which is what you want on a desktop; the plugdev fallback covers systems without it.
+# DEVTYPE pins this to the device node itself; without it the rule also fires for each
+# interface, where idVendor is not set.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="05a9", ATTR{idProduct}=="1550", TAG+="uaccess", MODE="0660", GROUP="plugdev"

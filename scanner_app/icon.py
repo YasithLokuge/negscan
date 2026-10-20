@@ -9,9 +9,10 @@ import os
 
 from PySide6.QtGui import QIcon
 
-ASSETS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
-SVG = os.path.join(ASSETS, "icon.svg")
-PNG = os.path.join(ASSETS, "icon.png")
+from .platform_support import resource_path
+
+SVG = resource_path("assets", "icon.svg")
+PNG = resource_path("assets", "icon.png")
 
 
 def app_icon():

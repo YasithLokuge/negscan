@@ -1,0 +1,166 @@
+name: release
+
+# Tag a commit to publish a release:
+#     git tag v0.1.0 && git push origin v0.1.0
+# Or run it by hand from the Actions tab to get the installers as artifacts without publishing.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (no release is published)"
+        default: "0.0.0-dev"
+
+permissions:
+  contents: read
+
+# Only the repository owner can run these. Pushing and workflow_dispatch already need write
+# access, but on a public repo anyone can open a pull request, and that would otherwise start a
+# build on every runner. Gating on the owner means a stranger's PR creates a run whose jobs all
+# skip. Checked against github.repository_owner rather than a hard-coded name so this survives a
+# rename or a transfer.
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    if: github.actor == github.repository_owner
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-13 is the last Intel runner; macos-14 and later are Apple Silicon. PyInstaller
+          # cannot cross-build, so each architecture needs its own runner.
+          - os: macos-13
+            label: macOS (Intel)
+          - os: macos-14
+            label: macOS (Apple Silicon)
+          - os: windows-latest
+            label: Windows
+          # Built on the oldest supported Ubuntu on purpose: glibc is backward compatible, not
+          # forward, so a binary built on a newer release will not start on an older distro.
+          - os: ubuntu-22.04
+            label: Linux
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Work out the version
+        id: version
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${{ github.event.inputs.version }}"
+          fi
+          echo "version=${version:-0.0.0}" >> "$GITHUB_OUTPUT"
+          echo "Building version ${version:-0.0.0}"
+
+      - name: Install Qt's runtime libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon-x11-0 libdbus-1-3 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0
+
+      - name: Install Inno Setup (Windows)
+        if: runner.os == 'Windows'
+        run: choco install innosetup --no-progress -y
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -s tests
+
+      - name: Build
+        run: python packaging/build.py --version ${{ steps.version.outputs.version }}
+
+      - name: Check the frozen app starts
+        shell: bash
+        run: |
+          set -e
+          case "${{ runner.os }}" in
+            macOS)   app="dist/Negscan.app/Contents/MacOS/Negscan" ;;
+            Windows) app="dist/Negscan/Negscan.exe" ;;
+            *)       app="dist/Negscan/Negscan" ;;
+          esac
+          # Exits non-zero because no scanner is attached to a runner; what matters is that it
+          # loads Qt, finds its bundled libusb, and prints its report rather than crashing.
+          output=$("$app" --check 2>&1 || true)
+          echo "$output"
+          if ! echo "$output" | grep -q "libusb"; then
+            echo "::error::--check printed no libusb line; the frozen app did not start properly"
+            exit 1
+          fi
+          if echo "$output" | grep -q "not bundled"; then
+            echo "::error::libusb was not bundled into the app"
+            exit 1
+          fi
+          echo "frozen app starts and carries its own libusb"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: negscan-${{ matrix.os }}
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish
+    needs: build
+    if: github.ref_type == 'tag' && github.actor == github.repository_owner
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # only this job needs to write, and only to create the release
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List what will be published
+        run: ls -lh artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          draft: false
+          generate_release_notes: true
+          body: |
+            ## Installing
+
+            | Platform | Download | Notes |
+            | --- | --- | --- |
+            | macOS (Intel) | `*-macOS-x86_64.dmg` | Open the disc image and drag Negscan to Applications |
+            | macOS (Apple Silicon) | `*-macOS-arm64.dmg` | As above |
+            | Windows | `*-setup.exe`, or the portable `.zip` | Also needs a WinUSB driver — see below |
+            | Linux | `*-linux-x86_64.tar.gz` | Unpack, then `sudo ./install.sh` |
+
+            These builds are **not code-signed**.
+
+            - **macOS** will refuse to open it on the first try. Right-click the app and choose
+              *Open*, then confirm — or run
+              `xattr -dr com.apple.quarantine /Applications/Negscan.app`.
+            - **Windows** SmartScreen will warn: *More info* → *Run anyway*. The scanner also needs
+              a WinUSB driver bound to it with [Zadig](https://zadig.akeo.ie/) before the app can
+              talk to it.
+            - **Linux** needs the udev rule from `install.sh` to use the scanner without root.
+
+            Run `Negscan --check` from a terminal if it cannot find the scanner; it reports what
+            the app can and cannot see.

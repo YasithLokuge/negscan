@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Negscan
+GenericName=Film Scanner
+Comment=Scan film negatives with the Kaiser Baas / OVT USB scanner
+Exec=/opt/negscan/Negscan
+Icon=negscan
+Terminal=false
+Categories=Graphics;Photography;Scanning;
+Keywords=film;negative;scanner;photo;

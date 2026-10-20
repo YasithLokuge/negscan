@@ -1,0 +1,122 @@
+# PyInstaller spec for Negscan. Build with:
+#     pyinstaller packaging/negscan.spec --noconfirm
+#
+# One spec covers macOS, Windows and Linux; the per-platform differences are the icon format, the
+# .app bundle, and which libusb to pick up.
+#
+# libusb is bundled deliberately. pyusb finds it with ctypes.util.find_library at run time, which
+# PyInstaller cannot follow, so without this the frozen app starts and then reports no backend.
+# scanner_app.platform_support.bundled_libusb() looks for it next to the app.
+import os
+import sys
+from pathlib import Path
+
+from PyInstaller.utils.hooks import collect_dynamic_libs
+
+PROJECT = Path(SPECPATH).parent
+IS_MAC = sys.platform == "darwin"
+IS_WINDOWS = os.name == "nt"
+
+APP_NAME = "Negscan"
+VERSION = os.environ.get("NEGSCAN_VERSION", "0.0.0").lstrip("v")
+
+
+def find_libusb():
+    """Locate a libusb to ship inside the app.
+
+    `libusb-package` is preferred: it is a wheel carrying a prebuilt libusb for every platform we
+    release on, so the build does not depend on what the runner happens to have installed, and it
+    hands back an absolute path (on Linux a plain find_library only returns a soname, which cannot
+    be copied into the bundle).
+    """
+    found = []
+    try:
+        import libusb_package
+        path = libusb_package.get_library_path()
+        if path and os.path.isfile(str(path)):
+            found.append(str(path))
+    except Exception as e:
+        print(f"[negscan.spec] libusb-package unavailable ({e}); falling back to the system libusb")
+
+    if not found:
+        found += [p for p, _ in collect_dynamic_libs("usb")
+                  if "libusb" in os.path.basename(p)]
+    if not found:
+        import ctypes.util
+        name = ctypes.util.find_library("usb-1.0") or ctypes.util.find_library("libusb-1.0")
+        if name and os.path.isfile(name):
+            found.append(name)
+
+    unique = list(dict.fromkeys(found))
+    return [(p, ".") for p in unique]
+
+
+libusb_binaries = find_libusb()
+print(f"[negscan.spec] bundling libusb: {libusb_binaries or 'NONE FOUND - the app will need a system libusb'}")
+
+datas = [
+    (str(PROJECT / "assets" / "icon.svg"), "assets"),
+    (str(PROJECT / "assets" / "icon.png"), "assets"),
+]
+
+a = Analysis(
+    [str(PROJECT / "negscan_app.py")],
+    pathex=[str(PROJECT)],
+    binaries=libusb_binaries,
+    datas=datas,
+    hiddenimports=["usb.backend.libusb1"],
+    hookspath=[],
+    runtime_hooks=[],
+    # Qt ships far more than this app uses; leaving it all in triples the download.
+    excludes=[
+        "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebEngineQuick",
+        "PySide6.QtQuick", "PySide6.QtQuick3D", "PySide6.QtQml", "PySide6.Qt3DCore",
+        "PySide6.QtMultimedia", "PySide6.QtMultimediaWidgets", "PySide6.QtCharts",
+        "PySide6.QtDataVisualization", "PySide6.QtPdf", "PySide6.QtPdfWidgets",
+        "PySide6.QtBluetooth", "PySide6.QtNfc", "PySide6.QtPositioning", "PySide6.QtSensors",
+        "PySide6.QtSerialPort", "PySide6.QtSql", "PySide6.QtTest", "PySide6.QtDesigner",
+        "PySide6.QtHelp", "PySide6.QtUiTools", "PySide6.QtOpenGL", "PySide6.QtOpenGLWidgets",
+        "tkinter", "matplotlib", "pytest", "setuptools", "pip",
+    ],
+    noarchive=False,
+)
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name=APP_NAME,
+    debug=False,
+    strip=False,
+    upx=False,
+    console=False,
+    icon=str(PROJECT / "assets" / ("Negscan.icns" if IS_MAC else "icon.png")),
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    name=APP_NAME,
+)
+
+if IS_MAC:
+    app = BUNDLE(
+        coll,
+        name=f"{APP_NAME}.app",
+        icon=str(PROJECT / "assets" / "Negscan.icns"),
+        bundle_identifier="io.github.negscan",
+        version=VERSION,
+        info_plist={
+            "CFBundleShortVersionString": VERSION,
+            "CFBundleVersion": VERSION,
+            "NSHighResolutionCapable": True,
+            # The scanner is a vendor-class USB device, not a camera, so no camera entitlement is
+            # needed. This key only keeps macOS from asking about unrelated device access.
+            "LSMinimumSystemVersion": "11.0",
+        },
+    )

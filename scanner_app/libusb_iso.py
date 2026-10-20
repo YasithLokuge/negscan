@@ -48,8 +48,12 @@ class Timeval(ctypes.Structure):
     _fields_ = [("tv_sec", ctypes.c_long), ("tv_usec", ctypes.c_long)]
 
 
+# The flexible array starts right after num_iso_packets, at the next 4-byte boundary, which is
+# *not* sizeof(Transfer): that is padded up for pointer alignment. On 64-bit builds those are 60
+# and 64. Derived rather than hard-coded so a 32-bit build stays correct.
 DESC_OFFSET = Transfer.iso_packet_desc.offset
-assert (ctypes.sizeof(Transfer), DESC_OFFSET) == (64, 60), (ctypes.sizeof(Transfer), DESC_OFFSET)
+assert DESC_OFFSET == Transfer.num_iso_packets.offset + Transfer.num_iso_packets.size
+assert DESC_OFFSET <= ctypes.sizeof(Transfer)
 
 
 class IsoError(Exception):

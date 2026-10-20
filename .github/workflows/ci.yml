@@ -1,0 +1,65 @@
+name: tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Only the repository owner can run these. Pushing and workflow_dispatch already need write
+# access, but on a public repo anyone can open a pull request, and that would otherwise start a
+# build on every runner. Gating on the owner means a stranger's PR creates a run whose jobs all
+# skip. Checked against github.repository_owner rather than a hard-coded name so this survives a
+# rename or a transfer.
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    if: github.actor == github.repository_owner
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # Qt needs these even in offscreen mode; without them the window tests abort on import.
+      - name: Install Qt's runtime libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon-x11-0 libdbus-1-3 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
+            libusb-1.0-0
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Lint
+        run: python -m pyflakes scanner_app scripts tests negscan_app.py
+
+      - name: Tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -s tests -v
+
+      # Proves the app imports and its USB layer loads on this OS. No scanner is attached to a
+      # runner, so "not found" is the expected result and must not fail the job.
+      - name: Self-check
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python negscan_app.py --check || true

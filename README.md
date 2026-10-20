@@ -1,32 +1,105 @@
 # Negscan
 
-A macOS app for scanning film negatives with the Kaiser Baas / OVT USB film scanner
-(USB `05a9:1550`: an OmniVision OV550 bridge with an OV5620 sensor).
+An app for scanning film negatives with the Kaiser Baas / OVT USB film scanner
+(USB `05a9:1550`: an OmniVision OV550 bridge with an OV5620 sensor). Runs on macOS, Windows and
+Linux.
 
-The scanner has no Windows-free driver and no UVC video interface — its only USB interface is
-vendor-specific class `0xFF`, so macOS never lists it as a camera and AVFoundation cannot see it at
-all. Negscan drives it directly over libusb instead: it powers up the bridge, configures the sensor
-over the bridge's SCCB bus using the register tables from the Windows driver, reads the
-isochronous image stream, and develops the raw Bayer frames into positives.
+The scanner has no driver outside Windows and no UVC video interface — its only USB interface is
+vendor-specific class `0xFF`, so the operating system never lists it as a camera and nothing that
+expects a webcam can see it. Negscan drives it directly over libusb instead: it powers up the
+bridge, configures the sensor over the bridge's SCCB bus using the register tables from the Windows
+driver, reads the isochronous image stream, and develops the raw Bayer frames into positives.
 
 Output is **2592 × 1680** (4.4 MP), the scanner's full frame.
 
-## Setup
+## Install
+
+Download the build for your platform from the
+[latest release](../../releases/latest).
+
+| Platform | File | How |
+| --- | --- | --- |
+| macOS (Intel) | `Negscan-*-macOS-x86_64.dmg` | Open it, drag Negscan to Applications |
+| macOS (Apple Silicon) | `Negscan-*-macOS-arm64.dmg` | As above |
+| Windows | `Negscan-*-setup.exe` | Run it. A portable `.zip` is also published |
+| Linux | `Negscan-*-linux-x86_64.tar.gz` | Unpack, then `sudo ./install.sh` |
+
+The builds are **not code-signed**, so each platform will object the first time:
+
+- **macOS** — right-click the app and choose *Open*, then confirm. Or
+  `xattr -dr com.apple.quarantine /Applications/Negscan.app`.
+- **Windows** — SmartScreen shows *Windows protected your PC*: *More info* → *Run anyway*.
+
+If the app cannot find the scanner, run it from a terminal with `--check`; it reports what it can
+and cannot see:
+
+```
+"/Applications/Negscan.app/Contents/MacOS/Negscan" --check     # macOS
+"C:\Program Files\Negscan\Negscan.exe" --check                # Windows
+/opt/negscan/Negscan --check                                   # Linux
+```
+
+### Windows also needs a USB driver
+
+Windows will not let libusb open the scanner until a WinUSB driver is bound to it. Install
+[Zadig](https://zadig.akeo.ie/), tick *Options → List All Devices*, select the device with USB ID
+`05A9 1550`, choose **WinUSB** as the target driver, and click *Replace Driver*. Removing the
+driver in Device Manager restores the original state.
+
+If the vendor's OVT Windows driver is installed, it claims the device first and Negscan will not
+see it until Zadig replaces it.
+
+### Linux permissions
+
+`install.sh` puts a udev rule in `/etc/udev/rules.d/99-negscan.rules` so the scanner can be opened
+without root. Unplug and replug the scanner afterwards.
+
+The Linux build is made on Ubuntu 22.04. glibc is backward compatible but not forward compatible,
+so it runs on that and anything newer, not on older distributions.
+
+## Running from source
 
 ```
 python3 -m venv .venv
-./.venv/bin/pip install -r requirements.txt
-```
-
-libusb must be present: `brew install libusb`. No kernel extension, no driver install, and no
-camera permission — macOS does not treat this device as a camera, so nothing in
-Privacy & Security applies to it.
-
-## Run
-
-```
+./.venv/bin/python -m pip install -r requirements.txt
 ./.venv/bin/python negscan_app.py
 ```
+
+This needs libusb on the machine: `brew install libusb` (macOS), `sudo apt install libusb-1.0-0`
+(Debian/Ubuntu). On Windows, `pip install libusb-package` supplies one. No kernel extension and no
+camera permission — the device is not a camera, so nothing in macOS Privacy & Security applies.
+
+## Building the installers
+
+```
+./.venv/bin/python -m pip install -r requirements-dev.txt
+./.venv/bin/python packaging/build.py --version 0.1.0
+```
+
+Output lands in `dist/release/`. The script builds for whichever platform it is run on; PyInstaller
+cannot cross-build, which is why the release workflow uses four runners. Tag a commit to publish:
+
+```
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+### Who can run the workflows
+
+Both workflows gate every job on `github.actor == github.repository_owner`, so only the repository
+owner's pushes, tags and manual runs actually build anything. Pushing and `workflow_dispatch`
+already require write access; the gate exists for pull requests, which on a public repository
+anyone can open and which would otherwise start a build on four runners.
+
+A pull request from anyone else still *creates* a workflow run — its jobs just all skip. To stop
+the run being created at all, either delete the `pull_request:` trigger from `ci.yml`, or set
+**Settings → Actions → General → Fork pull request workflows from outside collaborators** to
+*Require approval for all external contributors*. Two more settings there are worth tightening at
+the same time, since neither can be expressed in the workflow files:
+
+- **Actions permissions** — restrict which actions may run, if you would rather not allow any.
+- **Workflow permissions** — set the default `GITHUB_TOKEN` to *Read repository contents
+  permission*. Both workflows already declare `contents: read` and only the publishing job raises
+  it to `contents: write`, so nothing here depends on a permissive default.
 
 1. Put a negative in the holder and insert it, then press **Connect**. The lamp comes on, the app
    meters an exposure, and the live preview starts.
@@ -76,6 +149,12 @@ Useful for scripting, and for checking the hardware without the GUI:
 - `scanner_app/capture.py` — the worker thread and the auto-exposure loop.
 - `scanner_app/main_window.py`, `scanner_app/styles.py` — the window.
 - `scanner_app/cli.py` — the command line.
+- `scanner_app/platform_support.py` — the handful of things that differ between macOS, Windows and
+  Linux, and between running from source and from a frozen build: where data files and libusb
+  live, where scans go, and how to show a file in the file manager.
+- `packaging/` — the PyInstaller spec, the build script, the Inno Setup script and the Linux
+  install files. `.github/workflows/` runs the tests on all three platforms and builds the
+  release.
 - `scanner_app/icon.py`, `assets/` — the app icon. `assets/icon.svg` is the source; running
   `./.venv/bin/python scripts/make_icon.py` regenerates `icon.png` and the `Negscan.icns` that a
   `.app` bundle would use. Qt renders the SVG at whatever size it needs, so the window and Dock
@@ -99,7 +178,7 @@ captures resume from the last answer and usually settle in two.
 ./.venv/bin/python -m unittest discover -s tests -v
 ```
 
-72 tests covering the image pipeline, saturation, rotation, the Bayer decoders, the register tables, the
+90 tests covering the image pipeline, saturation, rotation, the Bayer decoders, the register tables, the
 `libusb` structure layout, the icon assets, the auto-exposure search against a modelled sensor,
 and the window's capture locking and sidebar layout (driven offscreen, with real key events).
 They need no hardware; three skip unless the vendor `.set` files are present, which they are not
