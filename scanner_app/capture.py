@@ -4,8 +4,12 @@ The GUI thread must never block on USB: a frame takes about 270 ms to arrive and
 takes longer. `CaptureWorker` owns the `Scanner`, streams previews continuously, and does a capture
 when asked, handing results back through Qt signals.
 """
+import datetime as dt
+import os
 import time
+from dataclasses import dataclass
 
+import cv2
 import numpy as np
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
@@ -19,6 +23,18 @@ AE_PERCENTILE = 99.8
 AE_CLIPPED = 250           # at or above this the frame is clipping and the level is meaningless
 AE_MAX_STEPS = 8
 DEFAULT_EXPOSURE = 50
+
+# PNG level 1 writes a 4.4 MP scan in about 270 ms for 5.6 MB; level 3 takes twice as long to save
+# 5%, and level 6 takes seven times as long. Lossless either way.
+PNG_COMPRESSION = 1
+
+
+@dataclass(frozen=True)
+class CaptureRequest:
+    """What the window asks for. Carrying the settings lets the worker develop and save too."""
+    frames: int
+    settings: object
+    folder: str
 
 
 def measure_level(mosaic, percentile=AE_PERCENTILE):
@@ -105,7 +121,7 @@ class CaptureWorker(QObject):
     """Lives on its own QThread. Call the slots; listen to the signals."""
 
     preview_ready = Signal(object)        # BGR uint8, half resolution
-    capture_ready = Signal(object)        # BGR uint8, full resolution
+    saved = Signal(str)                   # path of the finished scan
     status = Signal(str)
     failed = Signal(str)
     connected = Signal(bool)
@@ -207,12 +223,17 @@ class CaptureWorker(QObject):
 
     # --------------------------------------------------------------- capture
 
-    @Slot(int)
-    def capture(self, frame_count):
+    @Slot(object)
+    def capture(self, request):
+        """Grab, average, develop and save, all on this thread so the window never blocks.
+
+        Developing a 4.4 MP frame and writing the PNG take roughly 300 ms together; on the GUI
+        thread that is a visible freeze every time someone presses Capture.
+        """
         if self._scanner is None:
             self.failed.emit("The scanner is not connected.")
             return
-        frame_count = max(1, int(frame_count))
+        frame_count = max(1, int(request.frames))
         try:
             self.status.emit("Metering...")
             self._exposure = auto_expose(self._scanner, start=self._exposure)
@@ -228,11 +249,38 @@ class CaptureWorker(QObject):
                 return
             # Average the raw mosaics, before demosaicing: averaging Bayer samples of the same
             # colour is what actually cancels the sensor noise.
-            stacked = (processing.average_frames(mosaics) if len(mosaics) > 1 else mosaics[0])
-            self.capture_ready.emit(raw.debayer(stacked.tobytes()))
-            self.status.emit(f"Captured ({len(mosaics)} frame(s) averaged)")
+            self.status.emit("Developing...")
+            stacked = processing.average_frames(mosaics)
+            image = processing.process(raw.debayer(stacked.tobytes()), request.settings)
         except (ScannerError, OSError) as e:
             self.failed.emit(str(e))
+            return
+
+        self.status.emit("Saving...")
+        try:
+            path = self._write(image, request.folder)
+        except OSError as e:
+            self.failed.emit(f"Could not save the scan: {e}")
+            return
+        if path is None:
+            self.failed.emit(f"Could not write to {request.folder}")
+            return
+        self.saved.emit(path)
+        self.status.emit(f"Saved {os.path.basename(path)} "
+                         f"({len(mosaics)} frame(s) averaged)")
+
+    @staticmethod
+    def _write(image, folder):
+        """Write a timestamped PNG, returning its path, or None if OpenCV refused."""
+        os.makedirs(folder, exist_ok=True)
+        stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(folder, f"scan_{stamp}.png")
+        n = 1
+        while os.path.exists(path):   # two captures in the same second must not overwrite
+            path = os.path.join(folder, f"scan_{stamp}_{n}.png")
+            n += 1
+        ok = cv2.imwrite(path, image, [cv2.IMWRITE_PNG_COMPRESSION, PNG_COMPRESSION])
+        return path if ok else None
 
     @Slot(int)
     def set_exposure(self, value):

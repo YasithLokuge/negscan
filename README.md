@@ -34,9 +34,17 @@ Privacy & Security applies to it.
    - **Color negative**: inverts in density space, which removes the orange mask properly.
    - **B&W negative**: greyscale, inverted.
    - **Positive slide**: no inversion, tone only.
-3. Adjust Exposure, Contrast and Gamma. Tick **Show original** to see the raw negative.
-4. Press **Space** or **Capture**. The chosen number of frames is averaged and a lossless PNG is
-   written to the scan folder (default `~/Pictures/Negscan`).
+3. If the strip went in sideways, turn the scan with **⟲ / ⟳** or the **[** and **]** keys. It
+   applies to the preview and to everything saved afterwards, and it lasts until you quit: the
+   rotation belongs to the strip in the holder, not to you, so it is not kept with the other
+   settings.
+4. Adjust Exposure, Contrast, Gamma and Saturation. Saturation runs from 0 (greyscale) through
+   1.00 (unchanged) to 2.00, and is applied last, on the finished tones. Tick **Show original**
+   to see the raw negative.
+5. Press **Space** or **Capture**. The chosen number of frames is averaged and a lossless PNG is
+   written to the scan folder (default `~/Pictures/Negscan`). Developing and saving happen on the
+   worker thread, so the window stays live; the button reads **Scanning…** and both it and the
+   Space key are ignored until the file is written, so a scan cannot be started on top of another.
 
 ### Command line
 
@@ -47,6 +55,7 @@ Useful for scripting, and for checking the hardware without the GUI:
 ./.venv/bin/python -m scanner_app.cli scan out.png         # scan and develop
 ./.venv/bin/python -m scanner_app.cli scan out.png --frames 8 --film bw --raw out.raw
 ./.venv/bin/python -m scanner_app.cli scan out.png --saturation 1.3 --gamma 1.1
+./.venv/bin/python -m scanner_app.cli scan out.png --rotate 90
 ./.venv/bin/python -m scanner_app.cli raw out.raw          # raw Bayer mosaic only
 ./.venv/bin/python -m scanner_app.cli develop out.raw out.png   # develop a saved mosaic
 ./.venv/bin/python -m scanner_app.cli develop out.raw grey.png --saturation 0
@@ -90,7 +99,9 @@ captures resume from the last answer and usually settle in two.
 ./.venv/bin/python -m unittest discover -s tests -v
 ```
 
-51 tests covering the image pipeline, saturation, the Bayer decoders, the register tables, the
-`libusb` structure layout, the icon assets, and the auto-exposure search against a modelled sensor.
-They need no hardware. The scanner itself was exercised separately: repeated
-scans, reconnects, and recovery after killing a process mid-stream.
+72 tests covering the image pipeline, saturation, rotation, the Bayer decoders, the register tables, the
+`libusb` structure layout, the icon assets, the auto-exposure search against a modelled sensor,
+and the window's capture locking and sidebar layout (driven offscreen, with real key events).
+They need no hardware; three skip unless the vendor `.set` files are present, which they are not
+in this repository. The scanner itself was exercised separately: repeated scans, reconnects, and
+recovery after killing a process mid-stream.

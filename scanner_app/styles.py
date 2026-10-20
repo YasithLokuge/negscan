@@ -21,6 +21,22 @@ QFrame#sidebar {{
     border-right: 1px solid {BORDER};
 }}
 QFrame#previewWrap {{ background: {BG}; }}
+/* The scrolled controls and the pinned footer must read as one panel, so they take the
+   sidebar's colour and the scroll area itself stays invisible. */
+QScrollArea#sidebarScroll, QScrollArea#sidebarScroll > QWidget > QWidget,
+QWidget#sidebarControls, QWidget#sidebarFooter {{ background: {SIDEBAR}; }}
+QWidget#sidebarFooter {{ border-top: 1px solid {BORDER}; }}
+QScrollArea#sidebarScroll QScrollBar:vertical {{
+    background: transparent; width: 10px; margin: 0;
+}}
+QScrollArea#sidebarScroll QScrollBar::handle:vertical {{
+    background: {BORDER}; border-radius: 5px; min-height: 32px;
+}}
+QScrollArea#sidebarScroll QScrollBar::handle:vertical:hover {{ background: {MUTED}; }}
+QScrollArea#sidebarScroll QScrollBar::add-line:vertical,
+QScrollArea#sidebarScroll QScrollBar::sub-line:vertical {{ height: 0; }}
+QScrollArea#sidebarScroll QScrollBar::add-page:vertical,
+QScrollArea#sidebarScroll QScrollBar::sub-page:vertical {{ background: transparent; }}
 QLabel#appTitle {{ font-size: 20px; font-weight: 600; padding-bottom: 4px; }}
 QLabel#sectionTitle {{
     color: {MUTED}; font-size: 11px; font-weight: 600;
@@ -71,6 +87,7 @@ QPushButton#primary {{
 }}
 QPushButton#primary:hover {{ background: {ACCENT_HOVER}; }}
 QPushButton#ghost {{ background: transparent; color: {MUTED}; }}
+QPushButton#rotate {{ font-size: 16px; padding: 4px 10px; color: {TEXT}; }}
 QPushButton#ghost:hover {{ color: {TEXT}; }}
 QStatusBar {{ background: {SIDEBAR}; border-top: 1px solid {BORDER}; color: {MUTED}; }}
 QToolTip {{ background: {PANEL}; color: {TEXT}; border: 1px solid {BORDER}; }}

@@ -33,6 +33,10 @@ class TransferLayoutTests(unittest.TestCase):
         self.assertEqual(ctypes.sizeof(libusb_iso.IsoPacketDesc), 12)
 
 
+HAVE_SET_FILES = os.path.exists(gen_sensor_table.DEFAULT_SET)
+
+
+@unittest.skipUnless(HAVE_SET_FILES, "vendor .set files are not redistributable; see README")
 class SetFileTests(unittest.TestCase):
     def test_parses_the_shipped_5620_file(self):
         tables = gen_sensor_table.parse(gen_sensor_table.DEFAULT_SET)

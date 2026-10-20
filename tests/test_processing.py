@@ -104,8 +104,10 @@ class SaturationTests(unittest.TestCase):
 
     def test_zero_preserves_luma(self):
         img = colourful()
-        luma = (img.astype(np.float32) * proc._LUMA_BGR).sum(axis=2)
+        rec601_bgr = np.array([0.114, 0.587, 0.299], dtype=np.float32)
+        luma = (img.astype(np.float32) * rec601_bgr).sum(axis=2)
         out = proc.adjust_saturation(img, 0.0).astype(np.float32).mean(axis=2)
+        # cvtColor rounds the grey to 8 bits, so allow a level either way.
         np.testing.assert_allclose(out, luma, atol=1.5)
 
     def test_above_one_widens_the_channel_spread(self):
@@ -131,6 +133,59 @@ class SaturationTests(unittest.TestCase):
         grey = proc.process(img, proc.Settings(saturation=0.0))
         self.assertFalse(np.array_equal(plain, grey))
         np.testing.assert_allclose(grey[..., 0], grey[..., 2], atol=1)
+
+
+class RotationTests(unittest.TestCase):
+    def setUp(self):
+        # Distinct corners, so a wrong direction or a transpose cannot pass unnoticed.
+        self.img = np.zeros((40, 60, 3), dtype=np.uint8)
+        self.img[0, 0] = (10, 20, 30)      # top-left
+        self.img[0, -1] = (40, 50, 60)     # top-right
+
+    def test_zero_returns_the_same_array(self):
+        self.assertIs(proc.rotate(self.img, 0), self.img)
+
+    def test_ninety_is_clockwise(self):
+        out = proc.rotate(self.img, 90)
+        self.assertEqual(out.shape, (60, 40, 3))
+        # top-left goes to top-right, top-right goes to bottom-right
+        np.testing.assert_array_equal(out[0, -1], (10, 20, 30))
+        np.testing.assert_array_equal(out[-1, -1], (40, 50, 60))
+
+    def test_two_seventy_is_anticlockwise(self):
+        out = proc.rotate(self.img, 270)
+        self.assertEqual(out.shape, (60, 40, 3))
+        np.testing.assert_array_equal(out[-1, 0], (10, 20, 30))
+        np.testing.assert_array_equal(out[0, 0], (40, 50, 60))
+
+    def test_one_eighty(self):
+        out = proc.rotate(self.img, 180)
+        self.assertEqual(out.shape, self.img.shape)
+        np.testing.assert_array_equal(out[-1, -1], (10, 20, 30))
+
+    def test_four_quarter_turns_is_identity(self):
+        out = self.img
+        for _ in range(4):
+            out = proc.rotate(out, 90)
+        np.testing.assert_array_equal(out, self.img)
+
+    def test_angles_wrap(self):
+        np.testing.assert_array_equal(proc.rotate(self.img, 450), proc.rotate(self.img, 90))
+        np.testing.assert_array_equal(proc.rotate(self.img, -90), proc.rotate(self.img, 270))
+        self.assertIs(proc.rotate(self.img, 360), self.img)
+
+    def test_rejects_other_angles(self):
+        with self.assertRaises(ValueError):
+            proc.rotate(self.img, 45)
+
+    def test_pipeline_rotates_and_keeps_the_tones(self):
+        img = masked_negative()
+        plain = proc.process(img, proc.Settings())
+        turned = proc.process(img, proc.Settings(rotation=90))
+        self.assertEqual(turned.shape, (plain.shape[1], plain.shape[0], 3))
+        # Same pixels, just moved: rotation must not alter the developed tones.
+        np.testing.assert_array_equal(np.sort(turned, axis=None), np.sort(plain, axis=None))
+        np.testing.assert_array_equal(turned, proc.rotate(plain, 90))
 
 
 class AverageTests(unittest.TestCase):

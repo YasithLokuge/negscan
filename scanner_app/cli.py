@@ -79,7 +79,7 @@ def cmd_scan(args):
         print(f"raw mosaic -> {args.raw}")
     bgr = raw.debayer(stacked.tobytes())
     settings = processing.Settings(film=FILM_CHOICES[args.film], gamma=args.gamma,
-                                   saturation=args.saturation)
+                                   saturation=args.saturation, rotation=args.rotate)
     out = processing.process(bgr, settings)
     cv2.imwrite(args.output, out, [cv2.IMWRITE_PNG_COMPRESSION, 3])
     print(f"{out.shape[1]}x{out.shape[0]} -> {args.output}")
@@ -101,7 +101,7 @@ def cmd_develop(args):
     mosaic = np.fromfile(args.input, dtype=np.uint8)
     bgr = raw.debayer(mosaic.tobytes())
     settings = processing.Settings(film=FILM_CHOICES[args.film], gamma=args.gamma,
-                                   saturation=args.saturation)
+                                   saturation=args.saturation, rotation=args.rotate)
     cv2.imwrite(args.output, processing.process(bgr, settings))
     print(f"{args.input} -> {args.output}")
     return 0
@@ -125,6 +125,8 @@ def main(argv=None):
     sp.add_argument("--gamma", type=float, default=1.0)
     sp.add_argument("--saturation", type=float, default=1.0,
                     help="0 greyscale, 1 unchanged, 2 double (default 1)")
+    sp.add_argument("--rotate", type=int, choices=(0, 90, 180, 270), default=0,
+                    help="quarter turns clockwise (default 0)")
     sp.add_argument("--raw", default=None, help="also write the averaged raw mosaic here")
     add_capture_args(sp)
     sp.set_defaults(func=cmd_scan)
@@ -141,6 +143,8 @@ def main(argv=None):
     sp.add_argument("--gamma", type=float, default=1.0)
     sp.add_argument("--saturation", type=float, default=1.0,
                     help="0 greyscale, 1 unchanged, 2 double (default 1)")
+    sp.add_argument("--rotate", type=int, choices=(0, 90, 180, 270), default=0,
+                    help="quarter turns clockwise (default 0)")
     sp.set_defaults(func=cmd_develop)
 
     args = p.parse_args(argv)

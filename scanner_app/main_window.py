@@ -1,25 +1,27 @@
 """Main window: live preview, film settings and capture."""
-import datetime as dt
 import os
 import subprocess
 from collections import namedtuple
+from dataclasses import replace
 
 import cv2
 from PySide6.QtCore import QSettings, QSize, Qt, QThread, Signal
 from PySide6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QMainWindow, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget,
+    QMainWindow, QPushButton, QScrollArea, QSlider, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from . import ov5620
 from . import processing as proc
 from . import usb_scanner
-from .capture import CaptureWorker
+from .capture import CaptureRequest, CaptureWorker
 from .icon import app_icon
 from .styles import STYLESHEET
 
 DEFAULT_FOLDER = os.path.join(os.path.expanduser("~"), "Pictures", "Negscan")
+CAPTURE_LABEL = "Capture   Space"
+CAPTURE_BUSY_LABEL = "Scanning…"
 Slider = namedtuple("Slider", "slider label")
 
 
@@ -46,7 +48,7 @@ class MainWindow(QMainWindow):
     request_connect = Signal()
     request_disconnect = Signal()
     request_preview = Signal(bool)
-    request_capture = Signal(int)
+    request_capture = Signal(object)
     request_shutdown = Signal()
 
     def __init__(self):
@@ -58,7 +60,11 @@ class MainWindow(QMainWindow):
 
         self.settings = QSettings("Negscan", "Negscan")
         self.latest_preview = None      # last BGR frame from the scanner
+        # Rotation is deliberately not saved with the other settings: it belongs to the strip
+        # currently in the holder, not to the user, so it lasts the session and starts at zero.
+        self._rotation = 0
         self._connected = False
+        self._capturing = False         # a scan is in flight: metering, grabbing, or saving
         self._last_saved = None
         self._loading = False           # True while restoring saved settings
 
@@ -87,13 +93,33 @@ class MainWindow(QMainWindow):
 
         QShortcut(QKeySequence("Space"), self).activated.connect(self.capture)
         QShortcut(QKeySequence("Ctrl+R"), self).activated.connect(self.refresh_device)
+        QShortcut(QKeySequence("["), self).activated.connect(lambda: self.rotate_by(-90))
+        QShortcut(QKeySequence("]"), self).activated.connect(lambda: self.rotate_by(90))
 
     def _build_sidebar(self):
+        """The controls scroll; the two actions stay pinned to the bottom at full size.
+
+        All of this together wants about 980 px of height, which is more than the window has at
+        its minimum size. Left in one plain layout, Qt makes up the difference by squeezing every
+        widget below its size hint, and the first things to collapse are the buttons -- the
+        Capture button ends up 16 px tall with its label clipped.
+        """
         side = QFrame()
         side.setObjectName("sidebar")
         side.setFixedWidth(300)
-        v = QVBoxLayout(side)
-        v.setContentsMargins(20, 20, 20, 20)
+        outer = QVBoxLayout(side)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setObjectName("sidebarScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        controls = QWidget()
+        controls.setObjectName("sidebarControls")
+        v = QVBoxLayout(controls)
+        v.setContentsMargins(20, 20, 20, 10)
         v.setSpacing(12)
 
         title = QLabel("Negscan")
@@ -119,6 +145,25 @@ class MainWindow(QMainWindow):
         self.neutral_check = QCheckBox("Neutralise colour cast")
         self.neutral_check.stateChanged.connect(self._on_settings_changed)
         v.addWidget(self.neutral_check)
+
+        v.addWidget(section("Rotate"))
+        rotate_row = QHBoxLayout()
+        # U+21BA/U+21BB render far more solidly than the thin U+27F2 pair, and the arrows still
+        # need a larger size than the body text to read at all. See QPushButton#rotate in styles.
+        left = QPushButton("↺  [")
+        right = QPushButton("]  ↻")
+        for button, step in ((left, -90), (right, 90)):
+            button.setObjectName("rotate")
+            button.setMinimumHeight(34)
+            button.clicked.connect(lambda _=False, d=step: self.rotate_by(d))
+        self.rotation_label = QLabel("0°")
+        self.rotation_label.setObjectName("valueLabel")
+        self.rotation_label.setAlignment(Qt.AlignCenter)
+        self.rotation_label.setMinimumWidth(48)
+        rotate_row.addWidget(left, 1)
+        rotate_row.addWidget(self.rotation_label)
+        rotate_row.addWidget(right, 1)
+        v.addLayout(rotate_row)
 
         v.addWidget(section("Tone"))
         self.exposure = self._make_slider(-200, 200, self._fmt_ev)
@@ -153,16 +198,27 @@ class MainWindow(QMainWindow):
         v.addWidget(self.before_check)
 
         v.addStretch(1)
-        self.capture_button = QPushButton("Capture   Space")
+        scroll.setWidget(controls)
+        outer.addWidget(scroll, 1)
+
+        footer = QWidget()
+        footer.setObjectName("sidebarFooter")
+        actions = QVBoxLayout(footer)
+        actions.setContentsMargins(20, 10, 20, 20)
+        actions.setSpacing(10)
+        self.capture_button = QPushButton(CAPTURE_LABEL)
         self.capture_button.setObjectName("primary")
         self.capture_button.setEnabled(False)
+        self.capture_button.setMinimumHeight(44)
         self.capture_button.clicked.connect(self.capture)
-        v.addWidget(self.capture_button)
+        actions.addWidget(self.capture_button)
         self.open_button = QPushButton("Show last scan in Finder")
         self.open_button.setObjectName("ghost")
         self.open_button.setEnabled(False)
+        self.open_button.setMinimumHeight(32)
         self.open_button.clicked.connect(self.reveal_last)
-        v.addWidget(self.open_button)
+        actions.addWidget(self.open_button)
+        outer.addWidget(footer)
         return side
 
     def _make_slider(self, lo, hi, fmt):
@@ -206,7 +262,7 @@ class MainWindow(QMainWindow):
         self.worker = CaptureWorker()
         self.worker.moveToThread(self.thread)
         self.worker.preview_ready.connect(self._on_preview)
-        self.worker.capture_ready.connect(self._on_capture)
+        self.worker.saved.connect(self._on_saved)
         self.worker.status.connect(self.msg_label.setText)
         self.worker.failed.connect(self._on_failed)
         self.worker.connected.connect(self._on_connected)
@@ -259,7 +315,14 @@ class MainWindow(QMainWindow):
             contrast=self.contrast.slider.value() / 100.0,
             gamma=self.gamma.slider.value() / 100.0,
             saturation=self.saturation.slider.value() / 100.0,
+            rotation=self._rotation,
         )
+
+    def rotate_by(self, degrees):
+        """Turn the scan a quarter turn. Applies to the preview and to everything saved after."""
+        self._rotation = (self._rotation + degrees) % 360
+        self.rotation_label.setText(f"{self._rotation}°")
+        self._refresh_preview()
 
     def reset_tone(self):
         self.exposure.slider.setValue(0)
@@ -299,7 +362,8 @@ class MainWindow(QMainWindow):
         self._connected = connected
         self.connect_button.setEnabled(True)
         self.connect_button.setText("Disconnect" if connected else "Connect")
-        self.capture_button.setEnabled(connected)
+        # Clears any scan still marked in flight, so disconnecting mid-capture cannot wedge it.
+        self._set_capturing(False)
         if connected:
             self.request_preview.emit(True)
         else:
@@ -311,7 +375,7 @@ class MainWindow(QMainWindow):
         self.msg_label.setText(message)
         self.connect_button.setEnabled(usb_scanner.find_device() is not None)
         # A capture that fails leaves its button disabled otherwise, with no way to retry.
-        self.capture_button.setEnabled(self._connected)
+        self._set_capturing(False)
 
     def _on_preview(self, frame):
         self.latest_preview = frame
@@ -320,12 +384,19 @@ class MainWindow(QMainWindow):
     def _refresh_preview(self, *_):
         if self.latest_preview is None:
             return
+        settings = self.current_settings()
+        # Turn first, then fit: a quarter turn swaps width and height, so fitting the unturned
+        # frame would scale it for the wrong orientation and overflow the widget. The pipeline is
+        # then told there is nothing left to turn.
+        source = proc.rotate(self.latest_preview, settings.rotation)
         # Downscale to the widget before processing: the pipeline then costs a fraction as much
         # and the result on screen is identical.
         size = self.preview.size()
-        small = proc.fit_to(self.latest_preview, max(size.width(), 1), max(size.height(), 1))
-        out = small if self.before_check.isChecked() else proc.process(small, self.current_settings())
-        self._show(out)
+        small = proc.fit_to(source, max(size.width(), 1), max(size.height(), 1))
+        if self.before_check.isChecked():
+            self._show(small)
+        else:
+            self._show(proc.process(small, replace(settings, rotation=0)))
 
     def _show(self, bgr):
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
@@ -335,34 +406,36 @@ class MainWindow(QMainWindow):
 
     # ----- capture ------------------------------------------------------
 
+    def _set_capturing(self, busy):
+        """The one place that owns the capture button, so the button and Space always agree.
+
+        Disabling the button alone is not enough: a QShortcut fires whatever the button's state,
+        so holding Space through a scan would queue a second one behind it.
+        """
+        self._capturing = busy
+        self.capture_button.setEnabled(self._connected and not busy)
+        self.capture_button.setText(CAPTURE_BUSY_LABEL if busy else CAPTURE_LABEL)
+
     def capture(self):
         if not self._connected:
             self.msg_label.setText("Connect the scanner first.")
             return
-        self.capture_button.setEnabled(False)
-        self.request_capture.emit(self.frames_spin.value())
-
-    def _on_capture(self, bgr):
-        self.capture_button.setEnabled(True)
-        result = proc.process(bgr, self.current_settings())
-        folder = self.folder_edit.text() or DEFAULT_FOLDER
-        try:
-            os.makedirs(folder, exist_ok=True)
-        except OSError as e:
-            self.msg_label.setText(f"Could not create {folder}: {e}")
+        if self._capturing:
+            self.msg_label.setText("Still finishing the last scan…")
             return
-        stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = os.path.join(folder, f"scan_{stamp}.png")
-        n = 1
-        while os.path.exists(path):   # two captures in the same second must not overwrite
-            path = os.path.join(folder, f"scan_{stamp}_{n}.png")
-            n += 1
-        if cv2.imwrite(path, result, [cv2.IMWRITE_PNG_COMPRESSION, 3]):
-            self._last_saved = path
-            self.open_button.setEnabled(True)
-            self.msg_label.setText(f"Saved {os.path.basename(path)}")
-        else:
-            self.msg_label.setText(f"Could not write to {folder}")
+        self._set_capturing(True)
+        # The worker develops and saves as well as grabbing: doing either here would freeze the
+        # window for about a third of a second on every scan.
+        self.request_capture.emit(CaptureRequest(
+            frames=self.frames_spin.value(),
+            settings=self.current_settings(),
+            folder=self.folder_edit.text() or DEFAULT_FOLDER,
+        ))
+
+    def _on_saved(self, path):
+        self._set_capturing(False)
+        self._last_saved = path
+        self.open_button.setEnabled(True)
 
     def reveal_last(self):
         if self._last_saved:
