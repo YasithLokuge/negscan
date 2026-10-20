@@ -169,6 +169,11 @@ class WorkflowTests(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertNotIn(f"{label}\n", text)
 
+    def test_build_explains_when_nothing_will_be_published(self):
+        """A manual run skips Publish on purpose; the run has to say so somewhere visible."""
+        self.assertIn("GITHUB_STEP_SUMMARY", self.release)
+        self.assertIn("no release is published", self.release)
+
     @unittest.skipIf(yaml is None, "pyyaml is not installed")
     def test_jobs_have_a_timeout(self):
         for name in ("ci", "release"):

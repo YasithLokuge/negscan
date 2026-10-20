@@ -115,6 +115,34 @@ jobs:
           fi
           echo "frozen app starts and carries its own libusb"
 
+      # A manual run builds but deliberately does not publish, and a skipped Publish job gives no
+      # hint why. Say so here instead of leaving it to be worked out from the job graph.
+      - name: Summarise
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### ${{ matrix.label }}"
+            echo ""
+            if [ -d dist/release ] && [ -n "$(ls -A dist/release 2>/dev/null)" ]; then
+              for file in dist/release/*; do
+                echo "- \`$(basename "$file")\`"
+              done
+            else
+              echo "No installer was produced."
+            fi
+            echo ""
+            if [ "${{ github.ref_type }}" = "tag" ]; then
+              echo "Tag \`${{ github.ref_name }}\`: a release is published once every build succeeds."
+            else
+              echo "This is a **${{ github.ref_type }}** run, not a tag, so **no release is published**."
+              echo "Download the files above from this run's Artifacts section, or publish with:"
+              echo '```'
+              echo "git tag v1.2.3 && git push origin v1.2.3"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/upload-artifact@v4
         with:
           name: negscan-${{ matrix.os }}
